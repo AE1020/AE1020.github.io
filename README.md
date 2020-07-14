@@ -2,52 +2,43 @@
 title: "About"
 permalink: "/about/"
 layout: page
+mathjax: true
 ---
 
-## Installation
+These notes are on GitHub in [Jekyll][1] so I do not worry over a web server.
 
-Just fork the repo and adjust the `_config.yml` to use with [Github Pages](https://pages.github.com/) and your page is done.
+[1]: https://jekyllrb.com/
 
-## Features
+## Corrections
 
- - supports dark mode on macOS Mojave
- - optional sidebar
- - MathJax support
- - no external ressources
- - included archive page
- - supports pagination
- - feed generation
- - responsive
- - syntax highlighting
- - supports comments via [disqus](https://disqus.com/) or [isso](http://posativ.org/isso/)
+If you notice something wrong or outdated [please submit it as an issue][2]
+(or even better as a pull request with the improvement you imagine).
 
-## Based on
+[2]: https://github.com/AE1020/AE1020.github.io/issues
 
-- [Hyde](https://github.com/poole/hyde)
-- [Minima](https://github.com/jekyll/minima)
-- [Lagrange](https://github.com/LeNPaul/Lagrange)
-- [Font Awesome](http://fontawesome.io/)
-- [KaTeX](https://katex.org/)
-- [Pygments](https://github.com/richleland/pygments-css)
+## Theme Used
 
-## Installation (jekyll-remote-theme method)
+The theme is called ["Contrast"][3] and it is by [Niklaus Buschmann][4]. It was
+simple and looked good. Also it comes with support for equations, which you can
+enable with just `mathjax: true` in the page.
 
-You can use this theme with the `jekyll-remote-theme` plugin. Just create an empty repo, copy over the `index.html` file and add this to your `_config.yml`:
+$$ f^{(n)}(z) = \frac{n !}{2 \pi i} \int_{C}\! \frac{f(\zeta)}{(\zeta - z)^{n+1}} \mathrm{d}\zeta $$
 
-```yaml
-remote_theme: niklasbuschmann/contrast@v2.8
+Props.
 
-plugins:
-  - jekyll-remote-theme
-```
+[3]: https://jekyllthemes.io/theme/contrast
+[4]: https://github.com/niklasbuschmann
 
-## License
+The instructions suggest forking the repo, but I just cloned it and then pushed
+to an empty repository. That way I can search it in the web UI (since at time of
+writing GitHub does not search forks).
 
-[public domain](http://unlicense.org/)
+I'll mention this uses the [Liquid][5] templating system so I can find the
+documentation later when I need it.
 
-## Screenshots
+[5]: https://shopify.dev/docs/themes/liquid/reference
 
-![screenshot](https://user-images.githubusercontent.com/4943215/73125194-5f0b8b80-3fa4-11ea-805c-8387187503ad.png)
-
-![screenshot](https://user-images.githubusercontent.com/4943215/73125195-5fa42200-3fa4-11ea-89f8-d09c1d6fe252.png)
-
+{% comment %}
+         1         2         3         4         5         6         7         8
+12345678901234567890123456789012345678901234567890123456789012345678901234567890
+{% endcomment %}
