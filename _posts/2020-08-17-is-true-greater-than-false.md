@@ -177,7 +177,7 @@ allows `true > false`.
 It's also willing to convert true to 1 and false to 0, but not implicitly:
 
     error[E0308]: mismatched types
-    2 |     if true == 1 { println!("Equal"); }
+      |     if true == 1 { println!("Equal"); }
       |                ^ expected `bool`, found integer
 
 
@@ -258,14 +258,42 @@ against integers or other values...they just fail:
     => false
 
 
+## Julia: true > false
+
+Julia allows you to compare booleans against each other, and against integers,
+with true == 1 and false == 0:
+
+    julia> true > false
+    true
+
+    julia> true == 1
+    true
+
+The [Julia documentation mentions "chaining comparisons"][10].  It claims that
+this can *"often be quite useful in numerical code"*.
+
+    julia> 1 < 2 <= 2 < 3 == 3 > 2 >= 1 == 1 < 3 != 5
+    true
+
+[10]: https://docs.julialang.org/en/v1/manual/mathematical-operations/
+
+Note that this also permits `1 > 2 < 3`.  It also points out the worrying
+property that the order of operations is undefined.  :-(
+
+
 ## In Conclusion: *False Is Less Than True!*
 
-This survey makes me feel more comfortable with the idea.  If anything, it
-shows that comparing booleans on accident must not come up that often in
-practice.  There's scant discussion on how booleans should compare outside
-of the Haskellsphere...and few discussions on the error messages.  (Searching
-the web for "golang operator > not defined on bool" had *no* hits).
+If anything, the research I did shows that comparing booleans to each other
+*on accident* must not come up that often in practice.  There's scant
+discussion on how booleans should compare outside of the Haskellsphere...and
+few threads on the error messages.  (Searching the web for `"golang operator >
+not defined on bool"` had *no* hits).
 
-I think that the real thing to be worried about is implicit integer conversion.
-When you realize Haskell is not conflating the bad properties of some "hidden
-integer mechanic" into the type by being ordered, the benefits are worth it.
+I think that the real thing to be concerned about is implicit integer
+conversion.  The example from the Julia chained comparisons looks like
+something best avoiding in a modern language, vs. embracing it as a feature.
+Their mileage may vary.
+
+Yet when you realize Haskell is not conflating the bad properties of some
+"hidden integer mechanic" into the type by being ordered, it's less scary.
+I'm now basically satisfied that `true > false`.
