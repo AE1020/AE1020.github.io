@@ -289,6 +289,21 @@ ensures that either the AC_DEFINE or AC_MSG_ERROR will be expanded.
 
 ## How Might This Get Better?
 
+A way to improve it in the "here-today-now" sense is offered by kind reader
+@rdiez, if you are a configure.ac author:
+
+    # If macro PKG_PROG_PKG_CONFIG is not available, Autoconf generates
+    # a misleading error message, so check for existence first, and
+    # otherwise provide helpful advice.
+    #
+    m4_ifndef([PKG_PROG_PKG_CONFIG], [m4_fatal(
+        [Macro PKG_PROG_PKG_CONFIG is not available. It is usually
+	defined in file pkg.m4 provided by package pkg-config.]
+    )])
+
+But that's a targeted solution to this case, which puts the burden on everyone
+who writes configure.ac files.  Are there other options?
+
 A simple-minded improvement would be if you convinced the autotools maintainers
 to add an m4_pattern_forbid() like:
 
