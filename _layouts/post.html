@@ -5,6 +5,15 @@ layout: default
 <article>
   {% include meta.html post=page %}
   {{ content }}
+
+<!-- BEGIN: added to theme by ae1020 -->
+<hr style="margin-top: 2em; margin-bottom: 1.5em; border: none; border-top: 1px solid #ccc;">
+
+<div style="margin-bottom: 2em; color: #444; font-weight: bold;">
+  <p>If you have an idea for improving this article, <a href="https://github.com/AE1020/AE1020.github.io/issues">please submit it as an issue on GitHub</a> (or even better as a pull request)!</p>
+</div>
+<!-- END: added to theme by ae1020 -->
+
   {% if page.comments != false and site.comments.isso or site.comments.disqus %}
     <hr>
     {% if site.comments.isso_domain %}<div id="isso-thread"></div>{% endif %}
