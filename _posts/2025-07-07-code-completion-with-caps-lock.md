@@ -21,12 +21,13 @@ how to do it in a way that is consistent across Windows, macOS, and Linux!
 
 [1]: https://github.com/microsoft/PowerToys?tab=readme-ov-file
 
-VSCode is actually able to map the caps lock key to completion without any
+VSCode is actually able to map the Caps Lock key to completion without any
 special tools... BUT... *it won't stop the key from toggling the capitalization
 state*.  If your Caps Lock has a light it will go on and off, and each time
 you do a completion it will toggle the casing.
 
-So use [Microsoft PowerToys][1] *(it's open source!)*, specifically **Keyboard Manager**.
+So use [Microsoft PowerToys][1] *(it's open source!)*, specifically
+**Keyboard Manager**.
 
 <img src="https://ae1020.github.io/assets/images/powertoys-caps-lock-remap-to-f19.png" alt="Powertoys Caps Lock Remap to F19" style="width: 75%; max-width: 663px; height: auto;" />
 
@@ -34,8 +35,9 @@ I've remapped the Caps Lock key to **F19**.  My keyboard only has 12 function
 keys, so I'm not bumping anything I'd use out of the way.
 
 *(At first I didn't realize these extra function keys were available... and
-tried the "virtual keys" you can assign, with names "VK 1" up to "VK 252".  But choosing something in this range is a bit fraught... e.g. VK 1 is actually the
-mouse button.  And they show up as "unknown" in the VSCode keyboard mapping.)*
+tried the "virtual keys" you can assign, with names "VK 1" up to "VK 252".
+But choosing something in this range is a bit fraught, e.g. VK 1 is actually
+the mouse button.  And they show up as "unknown" in the VSCode keymap.)*
 
 The strange choice of F19 (when it goes up to F24) is because the Mac solution
 can only go up to F20, and the Linux solution has a default collision that you
@@ -82,7 +84,7 @@ solution was found.
 Some files sure *look* like editing them should be able to produce the effect.
 `/usr/share/X11/xkb/symbols/pc` and `/usr/share/X11/xkb/keycodes/evdev` seem
 like source code for specifying the entirety of your keyboard's behavior.  But
-when it comes to the caps lock key, no dice--about the best I could accomplish
+when it comes to the Caps Lock key, no dice--about the best I could accomplish
 was get it to not do anything (though the light on the key toggled on and off).
 
 The keyd project seems to be the right solution to this problem, and works on
