@@ -16,6 +16,15 @@ If you notice something wrong or outdated [please submit it as an issue][2]
 
 [2]: https://github.com/AE1020/AE1020.github.io/issues
 
+## License
+
+Articles are licensed under "Creative Commons Attribution-NonCommercial 4.0".
+
+Not that I particularly *want* people to copy posts and put them somewhere else
+where I can't update them.  But bad actors would do it anyway regardless of the
+license.  So if your use is well-intentioned, and you'd like to excerpt the
+material then fine.  Just link back here, please.
+ 
 ## Theme Used
 
 The theme is called ["Contrast"][3] and it is by [Niklaus Buschmann][4]. It was
