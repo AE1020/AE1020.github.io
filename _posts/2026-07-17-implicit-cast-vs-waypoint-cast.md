@@ -665,7 +665,7 @@ struct VoidWaypointSafeChecker {
 
 #define void_waypoint_cast(TargetType, expr) \
     (DUMMY_INSTANCE(VoidWaypointSafeChecker< \
-        typename std::remove_const<typename std::remove_reference< \
+        typename std::remove_cv<typename std::remove_reference< \
             decltype(expr)>::type>::type>), \
     (TargetType)(void*)(expr))
 ```
