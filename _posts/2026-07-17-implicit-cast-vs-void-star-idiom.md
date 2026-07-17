@@ -1,15 +1,19 @@
 ---
-title:  "Implicit Casts vs the `(void*)` Waypoint"
+title:  "Implicit Casts vs the (maybe `(void*)`) Waypoint Cast"
 layout: post
 ---
 
 > *(Credit to Claude.ai for fleshing out my codebase comments on the void
-> cast idiom into a full article...to Gemini for reviewing it and catching a
-> case where the idiom was technically broken...and then to my own build
-> logs for pointing out that while `implicit_cast` fixes upcasts, it
-> completely breaks downcasts — proving that a cast's safety depends
-> entirely on which direction you're traveling through the class
-> hierarchy!)*  😲
+> cast idiom into a full article...to Google Gemini for reviewing it and
+> catching a case where the idiom was technically broken...to my own build
+> logs for pointing out that while `implicit_cast` fixes upcasts, it completely
+> breaks downcasts — proving that a cast's safety depends entirely on which
+> direction you're traveling through the class hierarchy...and finally to a
+> second round with Claude that caught the `(void*)` "fix" for downcasts
+> quietly picking the wrong overload too, confirmed by actually compiling
+> the counterexample — and then confirmed a second time by turning the fix
+> into a real compile-time check in a real codebase, which immediately
+> flagged two genuine wrapper types that needed it.)*  😲
 
 I found myself having to explain why I kept writing `(T*)(void*)ptr` in a
 C++ library. I was convinced the `(void*)` hop was a deliberate trick — a way
@@ -93,12 +97,32 @@ The "obvious" fix looks almost too simple:
 Base* b = (Base*)(void*)wrapper;
 ```
 
-The reasoning feels solid: a C-style cast to `void*` tries implicit
-conversions first, so `(void*)wrapper` is *forced* to go through the
-implicit `operator Derived*()` — the templated explicit operator never gets
-a chance to run, because the implicit one is strictly preferred. That part
-is true. Hop one really does give you the exact, correctly-adjusted
-`Derived*`, just erased to `void*`.
+The reasoning sounds solid — but it rests on a claim about overload
+resolution that isn't actually true, and it's worth pinning down now,
+because the same mistake comes back with real teeth in Case 2.
+
+A C-style cast to `void*` is direct-initialization, and direct-
+initialization considers *every* conversion function, explicit or not.
+Explicitness only decides whether a candidate is in the running at all — it
+carries no weight once ranking starts. Ranking runs purely on the
+conversion sequence from each candidate's *return type* to the target, and
+here the templated explicit operator has an edge the implicit one doesn't:
+matching its pattern `U*` against the target `void*` lets the compiler
+deduce `U = void` directly, so it returns `void*` exactly — an Identity
+match. The implicit operator returns `Derived*`, which still needs an
+ordinary `Derived* -> void*` conversion to finish the job — ranked
+Conversion, strictly worse than Identity. So the *explicit* template
+operator, not the implicit one, is actually the candidate that wins this
+contest.
+
+It happens not to matter here. Converting *any* object pointer to `void*`
+never adjusts the address — the standard requires the value to pass
+through unchanged, no matter which conversion function produced the
+pointer being converted. So whichever operator actually fires, `(void*)wrapper`
+ends up holding the same bits either way: the unadjusted address of the
+`Derived` object. Hop one lands on the right address by coincidence, not
+because "implicit beats explicit" — a belief that's about to stop being
+harmless.
 
 It's hop two that quietly ruins everything: `(Base*)(void* value)`.
 
@@ -283,96 +307,133 @@ getting a *corrupted address* from the wrong overload. Case 2 is about
 getting a *perfectly correct address* while silently skipping behavior the
 implicit operator was responsible for running.
 
-### The Fix for Case 2: Solicit the Side Effect, Then Reinterpret
+### The Tempting Fix for Case 2 (And Why It Also Fails)
 
-Going back to the two-hop `void*` idiom — the one Case 1 seemed to rule out
-— turns out to be exactly the right tool here, for a completely different
-reason than originally assumed:
+Given Case 1's story, the obvious move is to reach for the same two-hop
+idiom that Case 1 just spent a whole section warning about, on the theory
+that this time the roles are reversed and it'll actually work:
 
 ```cpp
-Derived* d = (Derived*)(void*)handle;
+Derived* d = (Derived*)(void*)handle;   // looks right...
 ```
 
-**Hop 1, `(void*)handle`.** A C-style cast to `void*` prefers implicit
-conversions. `Handle<Base>` has exactly one — `operator Base*()` — so that's
-the one that runs. `run_debug_validation` fires, `needs_check` gets
-cleared, and the resulting `Base*` converts trivially to `void*`. The
-explicit template operator was never a candidate, because an implicit
-candidate that fully satisfies the target type is always preferred over an
-explicit one.
+It isn't. The claim Case 1 debunked — "a C-style cast to `void*` prefers
+implicit conversions" — was never true, and here it actually costs
+something. `(void*)handle` is direct-initialization, so `Handle<Base>`'s
+templated `explicit operator U*()` is just as much a candidate as the
+implicit `operator Base*()`. Deducing `U = void` gives the explicit
+operator an exact-match return type of `void*`; the implicit operator's
+`Base*` needs an extra `Base* -> void*` conversion to get there. Identity
+beats Conversion, so `(void*)handle` calls the *explicit* operator — the
+one with no side effect at all. `run_debug_validation` never runs,
+`needs_check` never clears, and the address comes out fine only because —
+same as Case 1 — converting any object pointer to `void*` never needs
+adjustment, so the bits are identical no matter which operator produced
+them.
 
-**Hop 2, `(Derived*)(void* value)`.** This is a bare reinterpretation of the
-address bits — the compiler has no class hierarchy left to consult once the
-type has been erased to `void*`. Whether that's safe depends entirely on
-whether `Base` and `Derived` are laid out so that no offset adjustment is
-ever needed — e.g. both are standard-layout, the same size, and derivation
-adds no data members, so the "derived" object literally *is* the base
-object with a more specific compile-time label on it. That's not something
-the language checks for you at this cast; it has to be a fact you've
-separately proven about your own type hierarchy (a `static_assert` on
-`std::is_standard_layout` and matching `sizeof` is the usual way to pin
-that down).
+This is the exact same bug as Case 1, one level further in: reaching for
+`(void*)` on the theory that it selects the implicit conversion function,
+when it actually just runs an ordinary overload-resolution contest that the
+*explicit* operator happens to win whenever the target is `void*`. Case 1
+never noticed, because the winning candidate didn't matter there — both
+operators land on the same address. Case 2 isn't so forgiving, because
+what's riding on the outcome is a side effect, not just an address.
 
-So the `void*` waypoint isn't fixing an address problem here — the address
-was never wrong. It's solving a *sequencing* problem: force the one
-conversion function that has the side effect you need to be the one that
-actually runs, and only afterward, manually reinterpret the result to the
-type you actually wanted — leaning on an external guarantee that no bits
-need to move to do so.
+(If you don't want to take this on faith: put a `printf` in each of
+`Handle`'s two operators and watch which one actually fires for
+`(void*)handle`. It's the explicit one — confirmed by compiling exactly
+this example.)
 
-It's worth naming the reversal explicitly, because `(void*)` is playing two
-opposite roles across the two cases:
+### The Real Fix for Case 2: Copy-Initialize First, Then Reinterpret
 
-- **In Case 1 (the upcast), `void*` is a blinder.** It erases exactly the
-  type information — *which* base subobject you meant — that a later,
-  class-aware cast would have needed in order to adjust the address
-  correctly. That's why the naive fix made things worse, not better.
+The actual fix doesn't route through `void*` at all — it routes through the
+*named* intermediate type instead, using plain copy-initialization:
 
-- **In Case 2 (the downcast), `void*` is a firewall.** It doesn't erase
-  anything a later cast needed; it erases the *wrapper class itself*,
-  along with the side-effect-free `explicit operator U*()` riding along
-  with it, so that the only conversion function left standing is the
-  implicit one carrying the side effect you actually wanted to run.
+```cpp
+Base* validated = handle;                          // copy-init only
+Derived* d = reinterpret_cast<Derived*>(validated); // layout-proven reinterpret
+```
 
-Same two hops, same-looking syntax — but the first hop is buying you
-completely different things depending on which direction you're travelling
-through the hierarchy.
+**Step 1, `Base* validated = handle;`.** This is copy-initialization, not a
+cast — the same context `implicit_cast<T>()` relies on in Case 1.
+Copy-initialization doesn't rank explicit candidates worse than implicit
+ones; it removes them from the candidate set *unconditionally*, before any
+ranking happens at all. There's no `U = void` deduction to win a contest
+with, because `Base*` is a concrete named type, not a deduced pattern — the
+templated `explicit operator U*()` isn't a candidate here, full stop. The
+only conversion function left is `operator Base*()`, so it's the one that
+runs: `run_debug_validation` fires, `needs_check` clears, and `validated`
+holds a correctly-typed `Base*`.
+
+**Step 2, `reinterpret_cast<Derived*>(validated)`.** Now that `validated`
+is a plain, concrete `Base*` — no wrapper, no conversion operators left to
+interfere — reinterpreting it as `Derived*` is the same operation the
+broken `(Derived*)(void*)handle` attempt was reaching for in its second
+hop, with the same requirement: it's only safe because `Base` and `Derived`
+are laid out so that no offset adjustment is ever needed (standard-layout,
+matching `sizeof`, proven separately via `static_assert`). Routing through
+`void*` here would add nothing — `Base*` is already a plain pointer with no
+operators of its own left to dodge.
+
+The `void*` hop, in other words, was never doing the job this piece
+originally credited it with. That job — soliciting the implicit conversion
+function and nothing else — was always copy-initialization's job. `void*`
+just happened to look like it was forcing the same outcome, in a case
+(Case 1) where the actual winning overload didn't matter to the final
+bits. Once the source has a side effect that depends on picking the
+*correct* operator, `void*` is the wrong tool for that step —
+copy-initialization to a named intermediate type is the only version of
+"solicit the implicit conversion" the standard actually guarantees.
 
 ## So, Is It Still an "Implicit Cast"?
 
-Given both cases, is `(T*)(void*)expr` fair to call "an implicit cast"?
-Sort of — but not in the sense that matters most.
+Given both cases, is "copy-initialize, then reinterpret" fair to call "an
+implicit cast"? Sort of — but not in the sense that matters most, and not
+for the reason this piece originally gave.
 
-- **What it does force:** hop 1 genuinely forces the compiler to choose
-  whichever conversion function the source type declared *implicit*, over
-  any explicit competitor. That's a real, well-defined effect of routing
-  through `void*`, and it's the entire reason the idiom does anything at
-  all — whether what you cared about was the address that conversion
-  produces (Case 1, where it doesn't actually help, because the *second*
-  hop throws that correctness away for unrelated types) or the side effect
-  it runs (Case 2, where it's exactly what's needed).
+- **What actually forces the implicit path:** copy-initialization —
+  assigning or passing the source to a variable or parameter of its own
+  natural, concrete type. Copy-initialization unconditionally excludes
+  explicit conversion functions from the candidate set, which is the only
+  version of "give me the implicit conversion and nothing else" that the
+  standard actually guarantees, rather than one that depends on how a
+  ranking contest happens to come out.
 
-- **What it doesn't do:** produce a value of some type the language
-  considers implicitly reachable from the source. There is no implicit —
-  or explicit — conversion from `Handle<Base>` all the way to `Derived*`.
-  The final hop isn't a conversion the type system endorses at all; it's a
-  raw reinterpretation of an address, whose correctness is a fact you're
-  required to have established independently, elsewhere, about the layout
-  of your types.
+- **What `(void*)` doesn't reliably do:** force the implicit operator to
+  run. A C-style cast to `void*` is direct-initialization, which admits
+  explicit conversion functions as full candidates, ranked purely by how
+  close their return type is to `void*`. A templated `explicit operator
+  U*()` can deduce `U = void` for an exact match, beating an implicit
+  operator whose return type still needs an extra conversion to reach
+  `void*`. Whether that costs you anything depends entirely on whether
+  more than the address rides on the outcome — invisible in Case 1,
+  load-bearing in Case 2.
 
-The honest mental model is: **"solicit the implicit conversion, then
-reinterpret."** Calling the whole two-hop expression "an implicit cast" is
-fine as shorthand once you know what it actually buys you — but it isn't
-one language-level implicit conversion from source to target. It's an
-implicit conversion to some *intermediate* type, glued to a manual
-reinterpretation that only you can vouch for.
+- **What the reinterpret step doesn't do, either way:** produce a value of
+  some type the language considers implicitly — or even explicitly —
+  reachable from the source. There is no conversion from `Handle<Base>` all
+  the way to `Derived*`. That step isn't a conversion the type system
+  endorses at all; it's a raw reinterpretation of an address, whose
+  correctness is a fact you're required to have established independently,
+  elsewhere, about the layout of your types.
+
+The honest mental model is: **"copy-initialize to the implicit type, then
+reinterpret."** Calling the whole thing "an implicit cast" is fine as
+shorthand once you know what's actually buying you the implicit behavior —
+but it's copy-initialization doing that work, not `void*`. `void*` (or a
+named `reinterpret_cast` — they're equally valid once the intermediate is a
+plain pointer) only shows up in the *second* step, where it's just a
+bit-preserving relabeling with no say in which conversion function produced
+the value being relabeled.
 
 ## When each pattern is worth reaching for
 
-**`implicit_cast` is for compiler-accepted conversions; `void_waypoint_cast`
-is for recovering a typed pointer from erased storage.**
+**`implicit_cast` and the copy-init waypoint both work by *excluding*
+explicit conversion functions from the candidate set — they just start from
+opposite endpoints of the same hierarchy.**
 
-> Note: Credit to Perplexity.ai for the above sentence.
+> Note: Credit to Perplexity.ai for a version of the above sentence, ahead
+> of a later correction to what the waypoint idiom actually has to do.
 
 Side by side, using the two example types from above:
 
@@ -393,28 +454,36 @@ Base* b3 = (Base*)(void*)wrapper;               // WRONG: corrupted address, aga
 // Derived* is NOT implicitly reachable from Base* (downcasts never are).
 // implicit_cast has nothing to select -- it fails to compile.  A raw
 // static_cast compiles, but silently skips the validation side effect.
+// So does the naive (void*) waypoint -- it hits the SAME explicit
+// overload static_cast does, for the same reason: U=void is an exact
+// match that beats the implicit operator's Base* -> void* conversion.
 
-Derived* d1 = static_cast<Derived*>(handle);    // COMPILES, SKIPS run_debug_validation
-                                                //   (hits explicit operator U*())
-Derived* d2 = implicit_cast<Derived*>(handle);  // FAILS TO COMPILE
-                                                //   (no implicit Base* -> Derived*)
-Derived* d3 = (Derived*)(void*)handle;           // RIGHT: runs run_debug_validation,
-                                                //   correct address (layout-guaranteed)
+Derived* d1 = static_cast<Derived*>(handle);      // COMPILES, SKIPS run_debug_validation
+                                                   //   (hits explicit operator U*())
+Derived* d2 = implicit_cast<Derived*>(handle);    // FAILS TO COMPILE
+                                                   //   (no implicit Base* -> Derived*)
+Derived* d3 = (Derived*)(void*)handle;             // WRONG: ALSO skips run_debug_validation
+                                                   //   (explicit U=void wins the ranking)
+Base* validated = handle;                          // RIGHT: copy-init excludes
+                                                   //   the explicit operator outright
+Derived* d4 = reinterpret_cast<Derived*>(validated); //   runs run_debug_validation,
+                                                   //   correct address (layout-guaranteed)
 ```
 
-The contrast is the whole lesson: in Case 1, both `static_cast` and the
-`void*` waypoint choose the *same* wrong overload — the templated
-`explicit operator U*()` — because an implicit `Base*` was never on offer
-for the wrapper's actual conversion functions to reach; only bypassing the
-explicit competitor with `implicit_cast` gets the address right. In Case 2,
-`static_cast` and the `void*` waypoint choose *different* overloads —
-`static_cast` takes the only path direct-initialization can see
-(`explicit operator U*()`), while the `void*` waypoint's first hop takes the
-only path copy-initialization can see (`operator Base*()`), which is
-precisely the one carrying the side effect. `implicit_cast` isn't even in
-the running for Case 2, because there's no implicit conversion for it to
-select in the first place — the failure to compile *is* the signal that
-you're looking at a Case 2 problem, not a Case 1 one.
+The contrast is the whole lesson, but it's not the one this piece first
+reached for. In Case 1, both `static_cast` and the naive `void*` cast
+choose the *same* wrong overload — the templated `explicit operator U*()`
+— because an implicit `Base*` was never on offer for the wrapper's actual
+conversion functions to reach; only bypassing the explicit competitor with
+`implicit_cast` gets the address right. In Case 2, `static_cast` and the
+naive `void*` cast *also* choose the same overload as each other — for the
+same underlying reason, direct-initialization admitting the explicit
+template as a candidate and letting an exact-match deduction win. What's
+different about Case 2 is that `implicit_cast` can't even compile, because
+there's no implicit conversion for it to fall back on — which is exactly
+why this piece needed a *different* tool for Case 2: not `void*`, but
+copy-initialization to the named intermediate type, which excludes the
+explicit candidate the same unconditional way `implicit_cast` does.
 
 The two fixes solve non-overlapping problems, and the deciding question is:
 **does an implicit path to the target type exist at all?**
@@ -440,7 +509,7 @@ whole point. The fix isn't about erasing type information; it's about
 picking initialization contexts where the compiler's overload resolution
 rules already do what you want.
 
-**Reach for the `void*` waypoint** when there's no implicit path to the
+**Reach for the copy-init waypoint** when there's no implicit path to the
 final type at all — typically a downcast, or any conversion the type system
 will never sanction on its own — but the source type still has an implicit
 conversion (to *some* intermediate type) that has a side effect you can't
@@ -453,9 +522,17 @@ afford to skip:
 
 - Any place you're prepared to separately prove (via `static_assert` on
   `std::is_standard_layout` and matching `sizeof`, or an equivalent
-  domain-specific guarantee) that the reinterpretation in the second hop
+  domain-specific guarantee) that the reinterpretation in the final step
   needs no address adjustment. Without that proof, don't reach for this —
-  the second hop has no safety net of its own.
+  the reinterpret step has no safety net of its own.
+
+- Note that this is *not* the same tool as "cast to `void*` first." A
+  literal `(void*)` hop is direct-initialization and admits the same
+  explicit competitor `implicit_cast` was invented to dodge — it just
+  happens to matter less obviously, because the target is `void*` rather
+  than a named pointer type. The waypoint has to be copy-initialization to
+  the source's own concrete, named type; only then is the explicit operator
+  categorically excluded.
 
 Neither tool is a general-purpose substitute for `static_cast`. Each one
 exists to route around exactly one specific way a plain cast's overload
@@ -467,27 +544,56 @@ Whichever one applies, don't leave it as an unnamed one-off — and don't
 reach for a bare `(void*)` "for symmetry" with other casts in the code when
 `implicit_cast<T>()` was actually what the situation called for, or vice
 versa. Give each helper a name and keep it around as a small, reusable
-utility. For the `void*` one, `void_waypoint_cast<T>()` (or
-`void_waypoint_cast(T, expr)` if you're stuck writing it as a macro) seems
-like a reasonable name if it doesn't already have a name in your codebase:
-it says what the target type is, and the `_cast` suffix marks it as a cast
-operation rather than something that merely reads as "make this a `void*`."
+utility.
+
+For the copy-init waypoint, the honest implementation needs to name the
+intermediate type explicitly — there's no way to deduce it generically,
+since it's whatever concrete type the source's own implicit conversion
+operator happens to produce:
+
+```cpp
+template<typename Target, typename Intermediate, typename Source>
+Target waypoint_cast(const Source& src) {
+    Intermediate intermediate = src;                // copy-init: implicit path only
+    return reinterpret_cast<Target>(intermediate);  // layout-proven reinterpret
+}
+
+// Derived* d = waypoint_cast<Derived*, Base*>(handle);
+```
+
+Or, if you're stuck writing it as a macro for a C-compatible codebase, a
+small lambda forces the same copy-initialization context without needing a
+separate named helper per call site:
+
+```cpp
+#define waypoint_cast(TargetType, IntermediateType, expr) \
+    ([](IntermediateType intermediate) { \
+        return reinterpret_cast<TargetType>(intermediate); \
+    }(expr))
+```
+
+Either form makes the name do double duty: it says what the target type is,
+and the explicit `Intermediate` parameter documents exactly which implicit
+conversion is being solicited, instead of leaving it to be reverse-engineered
+from the source type's overload set.
 
 1. **Visibility.** A reviewer sees a named idiom — `implicit_cast<Base*>(x)`
-   or `void_waypoint_cast<Derived*>(x)` — instead of a cast expression whose
-   purpose has to be reverse-engineered from context, or worse,
-   misdiagnosed as the *other* pattern's fix.
+   or `waypoint_cast<Derived*, Base*>(x)` — instead of a cast expression
+   whose purpose has to be reverse-engineered from context, or worse,
+   misdiagnosed as the *other* pattern's fix (or as the broken literal
+   `(void*)` version of itself).
 
 2. **Searchability.** Every call site that depends on "give me the implicit
    conversion and nothing else" — for whichever of the two reasons — is one
    grep away, which matters if the wrapper type's conversion operators ever
    change.
 
-3. **Correctness by construction, where it applies.** `implicit_cast<T>()`
-   works by *excluding* a category of overload from consideration rather
-   than by out-guessing which overload will fire, so it stays correct even
-   as the class hierarchy underneath it changes shape. `void_waypoint_cast`
-   doesn't get this for free — its correctness rests on a layout invariant
+3. **Correctness by construction, where it applies.** Both `implicit_cast<T>()`
+   and `waypoint_cast<Target, Intermediate>()` work by *excluding* a category
+   of overload from consideration — via copy-initialization — rather than by
+   out-guessing which overload will fire or which one a `void*` target
+   happens to rank best. `waypoint_cast` doesn't get full correctness for
+   free, though — its final `reinterpret_cast` rests on a layout invariant
    you have to keep proving separately, so it's worth a comment at the
    definition site pointing at exactly what guarantees it.
 
@@ -497,3 +603,94 @@ first question isn't "which cast do I reach for" — it's "does an implicit
 conversion to what I want exist at all, or am I trying to force a side
 effect out of a conversion I can't actually complete." Those are different
 problems, and — as it turns out — they have different fixes.
+
+## Addendum: Whitelisting the Cheap Path
+
+`waypoint_cast<Target, Intermediate>()` is safe by construction, but it has
+a real cost at every call site: you have to name `Intermediate` by hand,
+and it forces an actual, separate copy-initialization step before the
+reinterpret. That's the right price to pay when a wrapper's conversion
+operators genuinely disagree — different side effects, or a side effect on
+one side and none on the other, the way `Handle` does above.
+
+But that's not the only shape a wrapper's conversion operators come in.
+Plenty of wrapper types offer several conversion paths that all just hand
+back *the same bits with the same side effects* — an implicit "natural
+type" operator and an explicit "generic escape hatch" operator that happen
+to agree on everything, because one is a thin pass-through to the other, or
+neither does anything but return a field. For those types, it provably does
+not matter which conversion function `(void*)` picks, and a bare, single-
+step `(Target)(void*)(expr)` is both correct and cheaper to write than
+naming an intermediate type at every use.
+
+The catch is that "provably does not matter" is a claim about the *type*,
+not about any individual cast expression — and it has to be re-verified by
+a human every time that type's operators change. Leaving that judgment
+silently implied at each call site is exactly how this article's original
+bug got written in the first place. So instead of trusting each call site,
+push the claim into a single, explicit, opt-in declaration attached to the
+type itself, and have every use of the cheap path check it automatically at
+compile time:
+
+```cpp
+// Nothing is safe by default -- only raw pointers, which have no competing
+// conversion operators to race in the first place.
+template<typename T>
+struct VoidWaypointSafe : std::is_pointer<T> {};
+
+// Opt a specific wrapper in, immediately next to its own definition, with a
+// comment justifying the claim:
+//
+//   Every conversion path PtrWrapper offers returns the same address with
+//   no side effects of its own, so it doesn't matter which one (void*)
+//   picks.
+//
+template<typename T>
+struct VoidWaypointSafe<PtrWrapper<T>> : std::true_type {};
+```
+
+```cpp
+template<typename T>
+struct VoidWaypointSafeChecker {
+    static_assert(
+        VoidWaypointSafe<T>::value,
+        "void_waypoint_cast(): T not vouched safe -- see VoidWaypointSafe"
+    );
+};
+
+// Forces a template to be instantiated (and any static_assert inside it to
+// run) purely at compile time, with zero runtime cost -- sizeof() never
+// evaluates its operand.
+#define DUMMY_INSTANCE(...) static_cast<void>(sizeof(__VA_ARGS__))
+
+#define void_waypoint_cast(TargetType, expr) \
+    (DUMMY_INSTANCE(VoidWaypointSafeChecker< \
+        typename std::remove_const<typename std::remove_reference< \
+            decltype(expr)>::type>::type>), \
+    (TargetType)(void*)(expr))
+```
+
+The comma operator is doing the real work here: the left side of `(A, B)`
+is evaluated (at compile time only, in this case) purely for its checking
+side effect, then discarded, and the expression's value is `B` —
+the plain `(void*)` cast, completely unchanged at runtime. `sizeof()` never
+evaluates its operand, so `DUMMY_INSTANCE` costs nothing at runtime either;
+all it does is force the compiler to instantiate
+`VoidWaypointSafeChecker<T>` for whatever `T` the expression actually has,
+which is what triggers the `static_assert` — and a failed `static_assert`
+is a compile error, not a debug-build check that a release build quietly
+skips. Any type that hasn't been (or is no longer) vouched for fails to
+compile, by name, at the exact call site that used it — there is no path
+where an unvetted type silently reaches the cast.
+
+This is deliberately a whitelist, not a detector: nothing here inspects a
+type's operators and decides for itself whether they agree. That judgment
+has to be made once, by a person, sitting next to the type's own
+definition, as a small and auditable claim ("every conversion path this
+type has returns the same address with the same side effects"). Get that
+claim wrong and this reintroduces the exact bug the rest of this article is
+about — just laundered through a trait that looks like a safety check. So
+it earns its keep only when the claim is genuinely trivial to verify by
+reading the type once, and it should stay rare and deliberate rather than
+becoming the default way of avoiding `waypoint_cast<Target, Intermediate>()`'s
+extra typing.
