@@ -3,17 +3,13 @@ title:  "Implicit Casts vs the (maybe `(void*)`) Waypoint Cast"
 layout: post
 ---
 
-> *(Credit to Claude.ai for fleshing out my codebase comments on the void
-> cast idiom into a full article...to Google Gemini for reviewing it and
-> catching a case where the idiom was technically broken...to my own build
-> logs for pointing out that while `implicit_cast` fixes upcasts, it completely
-> breaks downcasts — proving that a cast's safety depends entirely on which
-> direction you're traveling through the class hierarchy...and finally to a
-> second round with Claude that caught the `(void*)` "fix" for downcasts
-> quietly picking the wrong overload too, confirmed by actually compiling
-> the counterexample — and then confirmed a second time by turning the fix
-> into a real compile-time check in a real codebase, which immediately
-> flagged two genuine wrapper types that needed it.)*  😲
+> *This is my first piece of AI-assisted technical writing.  Rather than talk
+> here about giving credit to which-LLM-did-what (and date the C++ content
+> itself to the AI boom of 202X) I put some thoughts in another article:*
+>
+> <https://ae1020.github.io/ai-writing-when-to-stop/>
+
+---
 
 I found myself having to explain why I kept writing `(T*)(void*)ptr` in a
 C++ library. I was convinced the `(void*)` hop was a deliberate trick — a way
@@ -22,9 +18,9 @@ wrong one. I wrote up why I thought it worked. Then, while getting the
 writeup reviewed, it became clear the trick doesn't work in general: it can
 silently reproduce the exact pointer-corruption bug it was supposed to
 avoid. So I replaced it with a cleaner-looking `implicit_cast<T>()` helper
-that sidesteps the problem by construction, and moved on.
+that sidesteps the problem by construction, and thought I could move on.
 
-Then I rebuilt the actual library the idiom came from, and it didn't
+Then I tried rebuilding the actual library the idiom came from, and it didn't
 compile — not "silently wrong," a hard compiler error. My codebase's real
 use case turned out not to be the one I'd been writing about at all. It was
 the *mirror image* of it, and the mirror image doesn't have the same fix.
@@ -431,9 +427,6 @@ the value being relabeled.
 **`implicit_cast` and the copy-init waypoint both work by *excluding*
 explicit conversion functions from the candidate set — they just start from
 opposite endpoints of the same hierarchy.**
-
-> Note: Credit to Perplexity.ai for a version of the above sentence, ahead
-> of a later correction to what the waypoint idiom actually has to do.
 
 Side by side, using the two example types from above:
 
